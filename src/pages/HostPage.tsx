@@ -12,10 +12,12 @@ import {
   Square,
   Sparkles,
   RefreshCw,
+  QrCode,
 } from 'lucide-react';
 import { GameSyncProvider, useGameSync } from '../context/GameSyncContext';
 import { OwnerAuthGate } from '../components/OwnerAuthGate';
 import { StudioStageView } from '../components/StudioStageView';
+import { DevicePairingModal } from '../components/DevicePairingModal';
 import {
   CategoryBadgeArtwork,
   ClubCrestArtwork,
@@ -41,6 +43,7 @@ const HostConsoleBody: React.FC = () => {
   } = useGameSync();
 
   const [confirmNewGame, setConfirmNewGame] = useState(false);
+  const [showPairModal, setShowPairModal] = useState(false);
   const [selectedItemId, setSelectedItemId] = useState<string>('');
   const [inlineTitle, setInlineTitle] = useState<string>('');
   const [inlinePrompt, setInlinePrompt] = useState<string>('');
@@ -235,7 +238,16 @@ const HostConsoleBody: React.FC = () => {
                   {state.stage === 'board' ? 'Main 2×4 Board' : mg?.categoryTitle}
                 </p>
               </div>
-              <div className="flex items-center gap-3">
+              <div className="flex items-center gap-2 sm:gap-3 flex-wrap">
+                <button
+                  type="button"
+                  onClick={() => setShowPairModal(true)}
+                  title="Pair iPads, TV displays, or mobile phones with live QR code"
+                  className="px-2.5 py-1.5 text-xs font-semibold text-amber-300 bg-amber-500/10 border border-amber-500/30 hover:bg-amber-500/20 rounded-lg flex items-center gap-1.5 transition-colors cursor-pointer"
+                >
+                  <QrCode className="w-3.5 h-3.5 text-amber-400" />
+                  <span>Pair Devices</span>
+                </button>
                 <button
                   type="button"
                   onClick={resyncStudio}
@@ -1148,6 +1160,13 @@ const HostConsoleBody: React.FC = () => {
           )}
         </div>
       </main>
+
+      <DevicePairingModal
+        isOpen={showPairModal}
+        onClose={() => setShowPairModal(false)}
+        redScore={state.redScore}
+        blueScore={state.blueScore}
+      />
     </div>
   );
 };

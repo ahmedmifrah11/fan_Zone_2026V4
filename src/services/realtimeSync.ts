@@ -60,7 +60,8 @@ export class RealtimeSyncManager {
     const currentUp = Number(this.currentState?.updatedAt || 0);
     const incUp = Number(incomingState.updatedAt || 0);
 
-    if (!this.currentState || incUp >= currentUp) {
+    // Studio Screen is a spectator display that must always adopt the active broadcast
+    if (this.role === 'studio' || !this.currentState || incUp >= currentUp) {
       this.currentState = incomingState;
       this.handlers.onStateUpdate(incomingState);
       this.handlers.onConnectionChange?.(true, '🟢 Studio Screen Live Sync Active');
