@@ -1,0 +1,1166 @@
+import React, { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
+import {
+  Play,
+  RotateCcw,
+  Eye,
+  CheckCircle2,
+  XCircle,
+  Shuffle,
+  ArrowLeft,
+  Volume2,
+  Square,
+  Sparkles,
+  RefreshCw,
+} from 'lucide-react';
+import { GameSyncProvider, useGameSync } from '../context/GameSyncContext';
+import { OwnerAuthGate } from '../components/OwnerAuthGate';
+import { StudioStageView } from '../components/StudioStageView';
+import {
+  CategoryBadgeArtwork,
+  ClubCrestArtwork,
+  EmojiBadgeArtwork,
+  PlayerPortraitArtwork,
+} from '../components/BroadcastArtwork';
+import { ContentItem } from '../types/game';
+import {
+  BzzoiroSearchResultItem,
+  resolveBzzoiroPlayerImageUrl,
+  searchBzzoiroSports,
+} from '../data/bzzoiroSports';
+
+const HostConsoleBody: React.FC = () => {
+  const {
+    state,
+    contentItems,
+    logoutOwner,
+    sendHostAction,
+    p2pConnected,
+    p2pStatus,
+    resyncStudio,
+  } = useGameSync();
+
+  const [confirmNewGame, setConfirmNewGame] = useState(false);
+  const [selectedItemId, setSelectedItemId] = useState<string>('');
+  const [inlineTitle, setInlineTitle] = useState<string>('');
+  const [inlinePrompt, setInlinePrompt] = useState<string>('');
+  const [inlineAnswer, setInlineAnswer] = useState<string>('');
+  const [inlineBlurAmount, setInlineBlurAmount] = useState<number>(28);
+  const [spokenPlayerName, setSpokenPlayerName] = useState<string>('');
+  const [selectedPlayerImageUrl, setSelectedPlayerImageUrl] = useState<string | null>(null);
+  const [bzzoiroPlayerResults, setBzzoiroPlayerResults] = useState<BzzoiroSearchResultItem[]>([]);
+  const [searchingBzzoiro, setSearchingBzzoiro] = useState<boolean>(false);
+
+  const mg = state?.activeMiniGame || null;
+  const selectedCard =
+    state?.cards.find((c) => c.cardNumber === state.selectedCardNumber) || state?.cards[0];
+
+  // Filter saved content items for the active mini-game or currently selected card category
+  const activeCategory = mg ? mg.category : selectedCard?.category;
+  const isImageGuessCategory =
+    activeCategory === 'jersey' ||
+    activeCategory === 'photo' ||
+    activeCategory === 'stadium' ||
+    activeCategory === 'logo';
+  const categoryItems: ContentItem[] =
+    activeCategory && activeCategory !== 'tictactoe'
+      ? contentItems.filter((item) => item.category === activeCategory)
+      : [];
+
+  // Sync inline editor fields when active mini-game snapshot changes
+  useEffect(() => {
+    if (mg && mg.snapshot) {
+      setSelectedItemId(mg.snapshot.itemId || '');
+      setInlineTitle(mg.snapshot.title || '');
+      setInlinePrompt(mg.snapshot.prompt || '');
+      setInlineAnswer(mg.snapshot.answer || '');
+      setInlineBlurAmount(
+        typeof mg.snapshot.blurAmount === 'number' ? mg.snapshot.blurAmount : 28
+      );
+    } else if (categoryItems.length > 0) {
+      const first = categoryItems[0];
+      setSelectedItemId(first.id);
+      setInlineTitle(first.title);
+      setInlinePrompt(first.prompt);
+      setInlineAnswer(first.answer);
+      setInlineBlurAmount(typeof first.blurAmount === 'number' ? first.blurAmount : 28);
+    }
+  }, [mg?.cardNumber, mg?.snapshot?.itemId, activeCategory, contentItems.length]);
+
+  // Live Bzzoiro Sports API player search when Host types a footballer name in Tic-Tac-Toe
+  useEffect(() => {
+    const q = spokenPlayerName.trim();
+    if (mg?.category !== 'tictactoe' || q.length < 2) {
+      setBzzoiroPlayerResults([]);
+      setSearchingBzzoiro(false);
+      return;
+    }
+
+    let cancelled = false;
+    setSearchingBzzoiro(true);
+    const timer = setTimeout(async () => {
+      const results = await searchBzzoiroSports(q, 'player');
+      if (!cancelled) {
+        setBzzoiroPlayerResults(results.slice(0, 6));
+        setSearchingBzzoiro(false);
+        // Auto-attach exact match image if not manually chosen yet
+        const exact = results.find((r) => r.name.toLowerCase() === q.toLowerCase());
+        if (exact && !selectedPlayerImageUrl) {
+          setSelectedPlayerImageUrl(exact.imageUrl);
+        }
+      }
+    }, 220);
+
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [spokenPlayerName, mg?.category]);
+
+  const handleSelectContentDropdown = (itemId: string) => {
+    setSelectedItemId(itemId);
+    const found = categoryItems.find((i) => i.id === itemId);
+    if (found) {
+      setInlineTitle(found.title);
+      setInlinePrompt(found.prompt);
+      setInlineAnswer(found.answer);
+      const nextBlur = typeof found.blurAmount === 'number' ? found.blurAmount : 28;
+      setInlineBlurAmount(nextBlur);
+      if (mg && isImageGuessCategory) {
+        sendHostAction('minigame:setBlur', { blurAmount: nextBlur });
+      }
+    }
+  };
+
+  const handleApplySelectedItem = () => {
+    sendHostAction('minigame:useItem', {
+      itemId: selectedItemId,
+      title: inlineTitle,
+      prompt: inlinePrompt,
+      answer: inlineAnswer,
+      blurAmount: isImageGuessCategory ? inlineBlurAmount : undefined,
+    });
+  };
+
+  if (!state) {
+    return (
+      <div className="min-h-screen bg-[#030914] text-white flex items-center justify-center font-['Outfit']">
+        <div className="text-xl font-bold text-amber-400">Loading Host Console...</div>
+      </div>
+    );
+  }
+
+  const ttt = mg?.ticTacToe;
+  const activeCellIndex = ttt?.selectedCellIndex ?? 0;
+  const activeCell = ttt?.cells[activeCellIndex];
+  const activeCellClub = ttt && activeCell ? ttt.clubs[activeCell.col] : null;
+  const activeCellNation = ttt && activeCell ? ttt.nations[activeCell.row] : null;
+  const activeCellHints = (ttt?.hintsByCell && ttt.hintsByCell[activeCellIndex]) || [];
+
+  return (
+    <div className="min-h-screen bg-[#030914] text-slate-100 flex flex-col font-['Plus_Jakarta_Sans']">
+      {/* Top Bar Contract: 3 Zones Separated by gap-8 */}
+      <header className="flex items-center justify-between gap-8 px-6 py-3 bg-[#081326] border-b border-slate-800">
+        <Link
+          to="/host"
+          className="text-lg font-extrabold font-['Outfit'] tracking-tight text-white whitespace-nowrap shrink-0"
+        >
+          FanZone Host Console
+        </Link>
+
+        <nav className="flex items-center gap-6 text-sm font-medium text-slate-300">
+          <Link
+            to="/host"
+            className="text-amber-400 hover:text-amber-300 transition-colors whitespace-nowrap shrink-0"
+          >
+            Host Console
+          </Link>
+          <Link
+            to="/content"
+            className="hover:text-white transition-colors whitespace-nowrap shrink-0"
+          >
+            Content Manager
+          </Link>
+          <Link
+            to="/studio"
+            target="_blank"
+            rel="noreferrer"
+            className="hover:text-sky-400 transition-colors whitespace-nowrap shrink-0"
+          >
+            Studio Display
+          </Link>
+        </nav>
+
+        <div className="flex items-center gap-3 shrink-0">
+          <button
+            type="button"
+            onClick={logoutOwner}
+            className="min-h-[44px] px-4 py-2 text-xs font-semibold text-slate-200 bg-slate-900 border border-slate-700 rounded-lg hover:bg-slate-800 transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+          >
+            Sign Out
+          </button>
+        </div>
+      </header>
+
+      {/* Main iPad Two-Column Responsive Workspace */}
+      <main className="flex-1 max-w-[1600px] w-full mx-auto p-4 lg:p-6 grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+        {/* LEFT COLUMN (7 cols): Live 16:9 Studio Preview + Interactive 2x4 Card Selector */}
+        <div className="lg:col-span-7 flex flex-col gap-5">
+          {/* Live 16:9 Synchronized Studio Monitor */}
+          <section className="bg-[#081326] border border-slate-800 rounded-2xl p-4">
+            <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
+              <div>
+                <div className="flex items-center gap-2.5">
+                  <h2 className="text-base font-bold font-['Outfit'] text-white">
+                    Live 16:9 Broadcast Studio Monitor
+                  </h2>
+                  <div
+                    className={`px-2.5 py-0.5 rounded-full text-[11px] font-semibold flex items-center gap-1.5 border ${
+                      p2pConnected
+                        ? 'bg-emerald-500/15 border-emerald-500/40 text-emerald-400'
+                        : 'bg-amber-500/15 border-amber-500/40 text-amber-300'
+                    }`}
+                    title={p2pStatus}
+                  >
+                    <span
+                      className={`w-1.5 h-1.5 rounded-full ${
+                        p2pConnected ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400'
+                      }`}
+                    />
+                    <span>{p2pConnected ? 'Live Synchronized' : 'Sync Active'}</span>
+                  </div>
+                </div>
+                <p className="text-xs text-slate-400">
+                  Real-time mirror of /studio · Stage:{' '}
+                  {state.stage === 'board' ? 'Main 2×4 Board' : mg?.categoryTitle}
+                </p>
+              </div>
+              <div className="flex items-center gap-3">
+                <button
+                  type="button"
+                  onClick={resyncStudio}
+                  title="Force re-push full host state to all remote studio screens"
+                  className="px-2.5 py-1.5 text-xs font-semibold text-slate-200 bg-slate-900 border border-slate-700 hover:bg-slate-800 rounded-lg flex items-center gap-1.5 transition-colors cursor-pointer"
+                >
+                  <RefreshCw className="w-3.5 h-3.5 text-amber-400" />
+                  <span>Resync Studio</span>
+                </button>
+                <div className="text-xs font-['JetBrains_Mono'] font-bold text-amber-400">
+                  RED {state.redScore} · BLUE {state.blueScore}
+                </div>
+              </div>
+            </div>
+
+            <div className="w-full aspect-video rounded-xl overflow-hidden shadow-2xl">
+              <StudioStageView state={state} isPreview={true} />
+            </div>
+          </section>
+
+          {/* Interactive 2x4 Main Board Card Selector */}
+          <section className="bg-[#081326] border border-slate-800 rounded-2xl p-4">
+            {(() => {
+              const revealedCard = state.cards.find((c) => c.revealed);
+              return (
+                <>
+                  <div className="flex items-center justify-between mb-3">
+                    <div>
+                      <h2 className="text-base font-bold font-['Outfit'] text-white">
+                        2×4 Main Board Card Selector (1 Pick Per Turn)
+                      </h2>
+                      <p className="text-xs text-slate-400">
+                        {revealedCard
+                          ? `Card #${revealedCard.cardNumber} (${revealedCard.emojiLabel}) is picked — other 7 emojis are locked until Back to Board, Reset Covers, or Shuffle Sports.`
+                          : 'Tap any card (#1–#8) to select it, then Reveal Card or Open Mini Game'}
+                      </p>
+                    </div>
+                    <span className="text-xs font-['JetBrains_Mono'] font-bold text-amber-400 shrink-0">
+                      {revealedCard
+                        ? `Locked: Card #${revealedCard.cardNumber}`
+                        : `Selected: Card #${state.selectedCardNumber}`}
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                    {state.cards.map((card) => {
+                      const isSelected = state.selectedCardNumber === card.cardNumber;
+                      const isLockedByPick = Boolean(
+                        revealedCard && revealedCard.cardNumber !== card.cardNumber
+                      );
+                      return (
+                        <button
+                          key={card.cardNumber}
+                          type="button"
+                          disabled={isLockedByPick}
+                          onClick={() =>
+                            sendHostAction('card:select', { cardNumber: card.cardNumber })
+                          }
+                          className={`min-h-[124px] p-3 rounded-xl border text-left transition-all flex flex-col justify-between ${
+                            isLockedByPick
+                              ? 'bg-[#030914]/50 border-slate-800/60 opacity-40 grayscale cursor-not-allowed'
+                              : isSelected
+                              ? 'bg-[#0E2240] border-2 border-[#F59E0B] shadow-[0_0_20px_rgba(245,158,11,0.28)] cursor-pointer'
+                              : 'bg-[#030914]/90 border-slate-800 hover:border-slate-700 cursor-pointer'
+                          }`}
+                        >
+                          <div className="w-full flex items-center justify-between">
+                            <span className="font-['JetBrains_Mono'] font-bold text-sm text-amber-400 tabular-nums">
+                              #{card.cardNumber}
+                            </span>
+                            <span
+                              className={`text-[11px] font-semibold ${
+                                card.revealed
+                                  ? 'text-emerald-400'
+                                  : isLockedByPick
+                                  ? 'text-rose-400'
+                                  : 'text-slate-400'
+                              }`}
+                            >
+                              {card.revealed
+                                ? 'Picked & Revealed'
+                                : isLockedByPick
+                                ? 'Locked'
+                                : 'Covered'}
+                            </span>
+                          </div>
+
+                          <div className="my-2 flex items-center justify-between gap-2">
+                            <div className="flex items-center gap-1.5">
+                              <EmojiBadgeArtwork
+                                emojiId={card.emojiId}
+                                className="w-10 h-10 shrink-0"
+                              />
+                              <CategoryBadgeArtwork
+                                category={card.category}
+                                className="w-10 h-10 shrink-0"
+                              />
+                            </div>
+                          </div>
+
+                          <div>
+                            <div className="text-xs font-bold font-['Outfit'] text-white truncate">
+                              {card.categoryTitle}
+                            </div>
+                            <div className="text-[11px] text-slate-400 flex items-center justify-between mt-0.5">
+                              <span>{card.emojiLabel}</span>
+                              <span>·</span>
+                              <span
+                                className={
+                                  card.scored
+                                    ? card.scoreResult === 'correct'
+                                      ? card.awardedTeam === 'red'
+                                        ? 'text-red-400 font-bold'
+                                        : 'text-sky-400 font-bold'
+                                      : 'text-amber-400 font-bold'
+                                    : 'text-slate-500'
+                                }
+                              >
+                                {card.scored
+                                  ? card.scoreResult === 'correct'
+                                    ? `+1 ${card.awardedTeam?.toUpperCase()}`
+                                    : '0 pts'
+                                  : isLockedByPick
+                                  ? 'Locked'
+                                  : 'Available'}
+                              </span>
+                            </div>
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </>
+              );
+            })()}
+          </section>
+        </div>
+
+        {/* RIGHT COLUMN (5 cols): Touch-Friendly Control Panels */}
+        <div className="lg:col-span-5 flex flex-col gap-5">
+          {/* 1. RED TEAM & BLUE TEAM SCORE & TURN CONTROLS */}
+          <section className="bg-[#081326] border border-slate-800 rounded-2xl p-4">
+            <h2 className="text-sm font-bold font-['Outfit'] text-white mb-3">
+              Team Turn & Manual Score Controls
+            </h2>
+
+            <div className="grid grid-cols-2 gap-3">
+              {/* Red Team Control Box */}
+              <div
+                className={`p-3 rounded-xl border ${
+                  state.activeTeam === 'red'
+                    ? 'bg-red-950/35 border-[#EF4444]'
+                    : 'bg-[#030914] border-slate-800'
+                }`}
+              >
+                <div className="flex items-center justify-between mb-2">
+                  <span className="font-['Outfit'] font-extrabold text-sm text-red-400">
+                    RED TEAM
+                  </span>
+                  <span className="font-['JetBrains_Mono'] font-extrabold text-2xl text-white tabular-nums">
+                    {state.redScore}
+                  </span>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => sendHostAction('team:setActive', { team: 'red' })}
+                  className={`w-full min-h-[44px] px-3 py-2 rounded-lg text-xs font-bold mb-2 transition-colors cursor-pointer whitespace-nowrap ${
+                    state.activeTeam === 'red'
+                      ? 'bg-[#EF4444] text-white'
+                      : 'bg-slate-900 text-slate-300 hover:bg-slate-800 border border-slate-700'
+                  }`}
+                >
+                  {state.activeTeam === 'red' ? 'Active Turn: Red Team' : 'Switch to Red Team'}
+                </button>
+
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => sendHostAction('score:adjust', { team: 'red', delta: -1 })}
+                    className="min-h-[44px] min-w-[44px] rounded-lg bg-slate-900 hover:bg-slate-800 border border-slate-700 font-['JetBrains_Mono'] font-bold text-sm text-slate-200 cursor-pointer"
+                  >
+                    -1
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => sendHostAction('score:adjust', { team: 'red', delta: 1 })}
+                    className="min-h-[44px] min-w-[44px] rounded-lg bg-red-600/30 hover:bg-red-600/50 border border-red-500/50 font-['JetBrains_Mono'] font-bold text-sm text-red-200 cursor-pointer"
+                  >
+                    +1
+                  </button>
+                </div>
+              </div>
+
+              {/* Blue Team Control Box */}
+              <div
+                className={`p-3 rounded-xl border ${
+                  state.activeTeam === 'blue'
+                    ? 'bg-sky-950/35 border-[#38BDF8]'
+                    : 'bg-[#030914] border-slate-800'
+                }`}
+              >
+                <div className="flex items-center justify-between mb-2">
+                  <span className="font-['Outfit'] font-extrabold text-sm text-sky-400">
+                    BLUE TEAM
+                  </span>
+                  <span className="font-['JetBrains_Mono'] font-extrabold text-2xl text-white tabular-nums">
+                    {state.blueScore}
+                  </span>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => sendHostAction('team:setActive', { team: 'blue' })}
+                  className={`w-full min-h-[44px] px-3 py-2 rounded-lg text-xs font-bold mb-2 transition-colors cursor-pointer whitespace-nowrap ${
+                    state.activeTeam === 'blue'
+                      ? 'bg-[#38BDF8] text-slate-950'
+                      : 'bg-slate-900 text-slate-300 hover:bg-slate-800 border border-slate-700'
+                  }`}
+                >
+                  {state.activeTeam === 'blue' ? 'Active Turn: Blue Team' : 'Switch to Blue Team'}
+                </button>
+
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => sendHostAction('score:adjust', { team: 'blue', delta: -1 })}
+                    className="min-h-[44px] min-w-[44px] rounded-lg bg-slate-900 hover:bg-slate-800 border border-slate-700 font-['JetBrains_Mono'] font-bold text-sm text-slate-200 cursor-pointer"
+                  >
+                    -1
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => sendHostAction('score:adjust', { team: 'blue', delta: 1 })}
+                    className="min-h-[44px] min-w-[44px] rounded-lg bg-sky-500/30 hover:bg-sky-500/50 border border-sky-400/50 font-['JetBrains_Mono'] font-bold text-sm text-sky-200 cursor-pointer"
+                  >
+                    +1
+                  </button>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          {/* 3. CARD REVEAL & BOARD DECK ACTIONS */}
+          <section className="bg-[#081326] border border-slate-800 rounded-2xl p-4 space-y-3">
+            <div className="flex items-center justify-between">
+              <h2 className="text-sm font-bold font-['Outfit'] text-white">
+                Board Actions · Card #{state.selectedCardNumber} ({selectedCard?.categoryTitle})
+              </h2>
+              {state.stage === 'minigame' && (
+                <button
+                  type="button"
+                  onClick={() => sendHostAction('minigame:backToBoard')}
+                  className="min-h-[44px] px-3 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs flex items-center gap-1.5 cursor-pointer whitespace-nowrap"
+                >
+                  <ArrowLeft className="w-4 h-4" />
+                  Back to Board
+                </button>
+              )}
+            </div>
+
+            {/* Two Separate Primary Actions: Reveal Selected Card vs Open Mini Game */}
+            <div className="grid grid-cols-2 gap-3">
+              <button
+                type="button"
+                disabled={state.cards.some((c) => c.revealed)}
+                onClick={() =>
+                  sendHostAction('card:reveal', { cardNumber: state.selectedCardNumber })
+                }
+                className="min-h-[48px] px-4 py-2.5 rounded-xl bg-sky-500 hover:bg-sky-400 disabled:opacity-40 disabled:cursor-not-allowed text-slate-950 font-bold text-xs flex items-center justify-center gap-2 transition-colors cursor-pointer whitespace-nowrap"
+              >
+                <Eye className="w-4 h-4 shrink-0" />
+                <span>
+                  {state.cards.some((c) => c.revealed)
+                    ? '1 Card Picked (Others Locked)'
+                    : 'Reveal Selected Card'}
+                </span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() =>
+                  sendHostAction('card:openMiniGame', {
+                    cardNumber: state.selectedCardNumber,
+                    itemId: selectedItemId || undefined,
+                  })
+                }
+                className="min-h-[48px] px-4 py-2.5 rounded-xl bg-[#F59E0B] hover:bg-amber-400 text-slate-950 font-bold text-xs flex items-center justify-center gap-2 transition-colors cursor-pointer whitespace-nowrap"
+              >
+                <Sparkles className="w-4 h-4 shrink-0" />
+                <span>Open Mini Game</span>
+              </button>
+            </div>
+
+            {/* Secondary Board Management Buttons: Reset Covers, Shuffle Sports, New Game */}
+            <div className="grid grid-cols-3 gap-2 pt-1">
+              <button
+                type="button"
+                onClick={() => sendHostAction('board:resetCovers')}
+                className="min-h-[44px] px-3 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-700 text-xs font-semibold text-slate-200 flex items-center justify-center gap-1.5 cursor-pointer whitespace-nowrap"
+              >
+                <RotateCcw className="w-3.5 h-3.5 shrink-0" />
+                <span>Reset Covers</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => sendHostAction('board:shuffleSports')}
+                className="min-h-[44px] px-3 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-700 text-xs font-semibold text-slate-200 flex items-center justify-center gap-1.5 cursor-pointer whitespace-nowrap"
+              >
+                <Shuffle className="w-3.5 h-3.5 shrink-0" />
+                <span>Shuffle Sports</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setConfirmNewGame(true)}
+                className="min-h-[44px] px-3 py-2 rounded-xl bg-red-950/60 hover:bg-red-900/70 border border-red-500/40 text-xs font-semibold text-red-200 flex items-center justify-center gap-1.5 cursor-pointer whitespace-nowrap"
+              >
+                <RefreshCw className="w-3.5 h-3.5 shrink-0" />
+                <span>New Game</span>
+              </button>
+            </div>
+
+            {/* Confirmation Step for New Game */}
+            {confirmNewGame && (
+              <div className="p-3 rounded-xl bg-red-950/90 border border-red-500/60 flex items-center justify-between gap-3">
+                <span className="text-xs font-semibold text-red-100">
+                  Reset Red & Blue scores to 0 and shuffle a brand-new board?
+                </span>
+                <div className="flex items-center gap-2 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      sendHostAction('board:newGame');
+                      setConfirmNewGame(false);
+                    }}
+                    className="min-h-[44px] px-3 py-1.5 rounded-lg bg-red-500 hover:bg-red-400 text-white text-xs font-bold cursor-pointer whitespace-nowrap"
+                  >
+                    Confirm Reset
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setConfirmNewGame(false)}
+                    className="min-h-[44px] px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold cursor-pointer whitespace-nowrap"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            )}
+          </section>
+
+          {/* 4. ACTIVE MINI-GAME OPERATOR PANEL */}
+          {mg && mg.category === 'tictactoe' && mg.ticTacToe ? (
+            /* FOOTBALL TIC-TAC-TOE HOST OPERATOR CONTROLS */
+            <section
+              key={`host-ttt-${mg.cardNumber}`}
+              className="bg-[#081326] border border-slate-800 rounded-2xl p-4 space-y-4 animate-minigame-open"
+            >
+              <div className="flex items-center justify-between">
+                <h2 className="text-sm font-bold font-['Outfit'] text-white">
+                  Football Tic-Tac-Toe Controls
+                </h2>
+                <button
+                  type="button"
+                  onClick={() => sendHostAction('tictactoe:resetShuffle')}
+                  className="min-h-[44px] px-3 py-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 border border-slate-700 text-xs font-semibold text-amber-300 flex items-center gap-1.5 cursor-pointer whitespace-nowrap"
+                >
+                  <Shuffle className="w-3.5 h-3.5" />
+                  Reset & Shuffle Grid
+                </button>
+              </div>
+
+              {/* Starting Team / Active Turn Switcher */}
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => sendHostAction('tictactoe:setTurn', { team: 'red' })}
+                  className={`min-h-[44px] px-3 py-2 rounded-xl font-bold text-xs transition-colors cursor-pointer whitespace-nowrap ${
+                    mg.ticTacToe.turn === 'red'
+                      ? 'bg-[#EF4444] text-white'
+                      : 'bg-slate-900 border border-slate-700 text-slate-300'
+                  }`}
+                >
+                  Red Team Starts / Turn
+                </button>
+                <button
+                  type="button"
+                  onClick={() => sendHostAction('tictactoe:setTurn', { team: 'blue' })}
+                  className={`min-h-[44px] px-3 py-2 rounded-xl font-bold text-xs transition-colors cursor-pointer whitespace-nowrap ${
+                    mg.ticTacToe.turn === 'blue'
+                      ? 'bg-[#38BDF8] text-slate-950'
+                      : 'bg-slate-900 border border-slate-700 text-slate-300'
+                  }`}
+                >
+                  Blue Team Starts / Turn
+                </button>
+              </div>
+
+              {/* 3x3 Touch Square Selector (Squares 1-9) */}
+              <div>
+                <label className="block text-xs font-semibold text-slate-300 mb-2">
+                  Tap Square (1–9) to Judge Intersection:
+                </label>
+                <div className="grid grid-cols-3 gap-2">
+                  {mg.ticTacToe.cells.map((cell, idx) => {
+                    const club = mg.ticTacToe!.clubs[cell.col];
+                    const nation = mg.ticTacToe!.nations[cell.row];
+                    const isSelected = activeCellIndex === idx;
+                    return (
+                      <button
+                        key={idx}
+                        type="button"
+                        onClick={() =>
+                          sendHostAction('tictactoe:selectCell', { cellIndex: idx })
+                        }
+                        className={`min-h-[64px] p-2 rounded-xl border text-left flex flex-col justify-between transition-all cursor-pointer ${
+                          cell.owner === 'red'
+                            ? 'bg-red-600/30 border-red-400 text-white'
+                            : cell.owner === 'blue'
+                            ? 'bg-sky-500/30 border-sky-300 text-white'
+                            : isSelected
+                            ? 'bg-[#0E2240] border-2 border-[#F59E0B]'
+                            : 'bg-[#030914] border-slate-800 hover:border-slate-700'
+                        }`}
+                      >
+                        <div className="flex items-center justify-between text-[11px] font-['JetBrains_Mono'] font-bold">
+                          <span className="text-amber-400">#{idx + 1}</span>
+                          <span className="flex items-center gap-1">
+                            <ClubCrestArtwork
+                              clubId={club.id}
+                              logoUrl={club.logoUrl}
+                              className="w-3.5 h-3.5"
+                            />
+                            {club.shortName} ×{' '}
+                            <ClubCrestArtwork
+                              clubId={nation.id}
+                              logoUrl={nation.logoUrl}
+                              className="w-3.5 h-3.5"
+                            />
+                            {nation.code}
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-1.5 mt-1 min-w-0">
+                          {cell.owner && (
+                            <PlayerPortraitArtwork
+                              playerName={cell.playerName}
+                              playerImageUrl={cell.playerImageUrl}
+                              teamColor={cell.owner}
+                              className="w-5 h-5"
+                            />
+                          )}
+                          <span className="text-xs font-bold font-['Outfit'] truncate">
+                            {cell.owner ? cell.playerName : 'Open Square'}
+                          </span>
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Selected Intersection Details + Quick-Fill Reference Hints + Accept/Reject */}
+              <div className="p-3 rounded-xl bg-[#030914] border border-slate-800 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    {activeCellClub && (
+                      <ClubCrestArtwork
+                        clubId={activeCellClub.id}
+                        logoUrl={activeCellClub.logoUrl}
+                        className="w-6 h-6"
+                      />
+                    )}
+                    <span className="text-xs font-bold text-white">
+                      {activeCellClub?.name}
+                    </span>
+                    <span className="text-slate-500">×</span>
+                    {activeCellNation && (
+                      <ClubCrestArtwork
+                        clubId={activeCellNation.id}
+                        logoUrl={activeCellNation.logoUrl}
+                        className="w-6 h-6"
+                      />
+                    )}
+                    <span className="text-xs font-bold text-white">
+                      {activeCellNation?.name}
+                    </span>
+                  </div>
+                  <span className="text-xs font-['JetBrains_Mono'] text-amber-400">
+                    Square #{activeCellIndex + 1}
+                  </span>
+                </div>
+
+                {/* Quick-Fill Reference Hints with Bzzoiro Player Portraits */}
+                <div>
+                  <span className="block text-[11px] text-slate-400 mb-1.5">
+                    Quick-Fill Valid Footballers (Bzzoiro Sports Data · Tap to populate):
+                  </span>
+                  <div className="flex flex-wrap gap-1.5">
+                    {activeCellHints.map((hintName) => {
+                      const hintImg = resolveBzzoiroPlayerImageUrl(hintName);
+                      const isActiveHint = spokenPlayerName === hintName;
+                      return (
+                        <button
+                          key={hintName}
+                          type="button"
+                          onClick={() => {
+                            setSpokenPlayerName(hintName);
+                            setSelectedPlayerImageUrl(hintImg);
+                          }}
+                          className={`min-h-[36px] pl-1.5 pr-2.5 py-1 rounded-lg border text-xs font-medium flex items-center gap-1.5 transition-colors cursor-pointer ${
+                            isActiveHint
+                              ? 'bg-emerald-500/20 border-emerald-400 text-emerald-200'
+                              : 'bg-slate-900 hover:bg-slate-800 border-slate-700 text-emerald-300'
+                          }`}
+                        >
+                          <PlayerPortraitArtwork
+                            playerName={hintName}
+                            playerImageUrl={hintImg}
+                            className="w-5 h-5"
+                          />
+                          <span>{hintName}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* Footballer Search & Input with Live Bzzoiro Sports API Results */}
+                <div className="space-y-2">
+                  <div className="relative flex items-center">
+                    {(selectedPlayerImageUrl || resolveBzzoiroPlayerImageUrl(spokenPlayerName)) && (
+                      <div className="absolute left-2.5 pointer-events-none">
+                        <PlayerPortraitArtwork
+                          playerName={spokenPlayerName}
+                          playerImageUrl={
+                            selectedPlayerImageUrl || resolveBzzoiroPlayerImageUrl(spokenPlayerName)
+                          }
+                          className="w-7 h-7"
+                        />
+                      </div>
+                    )}
+                    <input
+                      type="text"
+                      value={spokenPlayerName}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        setSpokenPlayerName(val);
+                        setSelectedPlayerImageUrl(resolveBzzoiroPlayerImageUrl(val));
+                      }}
+                      placeholder="Type footballer name (searches sports.bzzoiro.com live)..."
+                      className={`w-full min-h-[44px] ${
+                        selectedPlayerImageUrl || resolveBzzoiroPlayerImageUrl(spokenPlayerName)
+                          ? 'pl-11'
+                          : 'pl-3.5'
+                      } pr-3.5 py-2 rounded-xl bg-[#081326] border border-slate-700 text-sm text-white focus:outline-none focus:border-amber-400`}
+                    />
+                  </div>
+
+                  {/* Live Bzzoiro Player Search Matches */}
+                  {(searchingBzzoiro || bzzoiroPlayerResults.length > 0) && (
+                    <div className="p-2 rounded-xl bg-[#081326] border border-slate-700/80 space-y-1.5">
+                      <div className="flex items-center justify-between text-[10px] text-slate-400 px-1">
+                        <span>Bzzoiro Sports API Player Matches</span>
+                        {searchingBzzoiro && <span className="text-amber-400">Searching...</span>}
+                      </div>
+                      <div className="flex flex-wrap gap-1.5">
+                        {bzzoiroPlayerResults.map((player) => (
+                          <button
+                            key={`${player.id}-${player.name}`}
+                            type="button"
+                            onClick={() => {
+                              setSpokenPlayerName(player.name);
+                              setSelectedPlayerImageUrl(player.imageUrl);
+                            }}
+                            className={`min-h-[34px] pl-1.5 pr-2.5 py-1 rounded-lg border text-xs flex items-center gap-1.5 transition-colors cursor-pointer ${
+                              spokenPlayerName === player.name &&
+                              selectedPlayerImageUrl === player.imageUrl
+                                ? 'bg-amber-500/20 border-amber-400 text-amber-200'
+                                : 'bg-[#030914] hover:bg-slate-900 border-slate-700 text-slate-200'
+                            }`}
+                          >
+                            <PlayerPortraitArtwork
+                              playerName={player.name}
+                              playerImageUrl={player.imageUrl}
+                              className="w-5 h-5"
+                            />
+                            <span className="font-semibold">{player.name}</span>
+                            {player.extra && (
+                              <span className="text-[10px] text-slate-400">({player.extra})</span>
+                            )}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <button
+                    type="button"
+                    disabled={Boolean(activeCell?.owner || mg.ticTacToe.winner)}
+                    onClick={() => {
+                      const nameToUse =
+                        spokenPlayerName.trim() || activeCellHints[0] || 'Accepted Player';
+                      const imgToUse =
+                        selectedPlayerImageUrl ||
+                        resolveBzzoiroPlayerImageUrl(nameToUse) ||
+                        bzzoiroPlayerResults[0]?.imageUrl ||
+                        null;
+                      sendHostAction('tictactoe:judge', {
+                        cellIndex: activeCellIndex,
+                        decision: 'accept',
+                        playerName: nameToUse,
+                        playerImageUrl: imgToUse,
+                      });
+                      setSpokenPlayerName('');
+                      setSelectedPlayerImageUrl(null);
+                      setBzzoiroPlayerResults([]);
+                    }}
+                    className="min-h-[48px] px-4 py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 disabled:opacity-40 text-slate-950 font-bold text-xs flex items-center justify-center gap-2 cursor-pointer whitespace-nowrap"
+                  >
+                    <CheckCircle2 className="w-4 h-4" />
+                    <span>
+                      Accept ({mg.ticTacToe.turn === 'red' ? 'Red Box' : 'Blue Box'})
+                    </span>
+                  </button>
+
+                  <button
+                    type="button"
+                    disabled={Boolean(activeCell?.owner || mg.ticTacToe.winner)}
+                    onClick={() => {
+                      sendHostAction('tictactoe:judge', {
+                        cellIndex: activeCellIndex,
+                        decision: 'reject',
+                        playerName: spokenPlayerName.trim(),
+                      });
+                      setSpokenPlayerName('');
+                      setSelectedPlayerImageUrl(null);
+                      setBzzoiroPlayerResults([]);
+                    }}
+                    className="min-h-[48px] px-4 py-2.5 rounded-xl bg-red-500 hover:bg-red-400 disabled:opacity-40 text-white font-bold text-xs flex items-center justify-center gap-2 cursor-pointer whitespace-nowrap"
+                  >
+                    <XCircle className="w-4 h-4" />
+                    <span>Reject & Pass Turn</span>
+                  </button>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => sendHostAction('minigame:backToBoard')}
+                  className="w-full min-h-[48px] px-4 py-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-700 text-slate-200 font-bold text-xs flex items-center justify-center gap-2 cursor-pointer whitespace-nowrap"
+                >
+                  <ArrowLeft className="w-4 h-4 shrink-0" />
+                  <span>Back to Board (Reset Covers & Shuffle Sports)</span>
+                </button>
+              </div>
+            </section>
+          ) : (
+            /* STANDARD MINI GAMES (IMAGE GUESSING, QUIZ, NUMBER, AUDIO) CONTROLS */
+            <section
+              key={`host-panel-${state.stage}-${mg?.cardNumber ?? 'board'}`}
+              className={`bg-[#081326] border border-slate-800 rounded-2xl p-4 space-y-4 ${
+                mg ? 'animate-minigame-open' : 'animate-board-return'
+              }`}
+            >
+              <div className="flex items-center justify-between">
+                <h2 className="text-sm font-bold font-['Outfit'] text-white">
+                  Mini-Game Content & Live Stage Controls
+                </h2>
+                {mg && (
+                  <span className="font-['JetBrains_Mono'] font-bold text-sm text-amber-400 tabular-nums">
+                    Timer: 00:{String(mg.timerSeconds).padStart(2, '0')}
+                  </span>
+                )}
+              </div>
+
+              {/* Content Item Selector & Inline Editor */}
+              {activeCategory !== 'tictactoe' && (
+                <div className="p-3 rounded-xl bg-[#030914] border border-slate-800 space-y-2.5">
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-300 mb-1">
+                      Select Saved {activeCategory?.toUpperCase()} Item ({categoryItems.length}{' '}
+                      available):
+                    </label>
+                    <select
+                      value={selectedItemId}
+                      onChange={(e) => handleSelectContentDropdown(e.target.value)}
+                      className="w-full min-h-[44px] px-3 py-2 rounded-xl bg-[#081326] border border-slate-700 text-xs text-white focus:outline-none focus:border-amber-400"
+                    >
+                      {categoryItems.map((item) => (
+                        <option key={item.id} value={item.id}>
+                          {item.title} — [{item.answer}]
+                          {isImageGuessCategory ? ` (${item.blurAmount ?? 28}px blur)` : ''}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {isImageGuessCategory && (
+                    <div className="p-2.5 rounded-xl bg-[#081326] border border-slate-700/80 space-y-2">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-bold text-amber-400">
+                          Mystery Blur Control (Live on /studio)
+                        </span>
+                        <span className="font-['JetBrains_Mono'] font-bold text-xs px-2 py-0.5 rounded bg-amber-500/15 border border-amber-500/40 text-amber-300 tabular-nums">
+                          {inlineBlurAmount}px
+                        </span>
+                      </div>
+                      <input
+                        type="range"
+                        min={0}
+                        max={60}
+                        step={2}
+                        value={inlineBlurAmount}
+                        onChange={(e) => {
+                          const val = Number(e.target.value);
+                          setInlineBlurAmount(val);
+                          if (mg) {
+                            sendHostAction('minigame:setBlur', { blurAmount: val });
+                          }
+                        }}
+                        className="w-full accent-[#F59E0B] cursor-pointer"
+                      />
+                      <div className="flex flex-wrap items-center justify-between gap-1">
+                        {[
+                          { label: '0px (Clear)', val: 0 },
+                          { label: '12px', val: 12 },
+                          { label: '20px', val: 20 },
+                          { label: '28px', val: 28 },
+                          { label: '40px', val: 40 },
+                          { label: '52px', val: 52 },
+                        ].map((preset) => (
+                          <button
+                            key={preset.val}
+                            type="button"
+                            onClick={() => {
+                              setInlineBlurAmount(preset.val);
+                              if (mg) {
+                                sendHostAction('minigame:setBlur', { blurAmount: preset.val });
+                              }
+                            }}
+                            className={`px-2 py-1 rounded-lg text-[10px] font-bold transition-colors cursor-pointer ${
+                              inlineBlurAmount === preset.val
+                                ? 'bg-[#F59E0B] text-slate-950'
+                                : 'bg-[#030914] border border-slate-700 text-slate-300 hover:border-amber-400/50'
+                            }`}
+                          >
+                            {preset.label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  <div>
+                    <label className="block text-[11px] text-slate-400 mb-1">
+                      Inline Question / Clue Prompt:
+                    </label>
+                    <input
+                      type="text"
+                      value={inlinePrompt}
+                      onChange={(e) => setInlinePrompt(e.target.value)}
+                      className="w-full min-h-[44px] px-3 py-2 rounded-xl bg-[#081326] border border-slate-700 text-xs text-white focus:outline-none focus:border-amber-400"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] text-slate-400 mb-1">
+                      Inline Private Official Answer:
+                    </label>
+                    <input
+                      type="text"
+                      value={inlineAnswer}
+                      onChange={(e) => setInlineAnswer(e.target.value)}
+                      className="w-full min-h-[44px] px-3 py-2 rounded-xl bg-[#081326] border border-emerald-500/50 text-xs text-emerald-300 font-semibold focus:outline-none focus:border-emerald-400"
+                    />
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={handleApplySelectedItem}
+                    className="w-full min-h-[44px] px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-600 text-xs font-bold text-amber-300 transition-colors cursor-pointer whitespace-nowrap"
+                  >
+                    Use Selected Item
+                  </button>
+                </div>
+              )}
+
+              {/* Audio Playback Controls when in Audio Mini Game */}
+              {mg?.category === 'audio' && (
+                <div className="p-3 rounded-xl bg-[#030914] border border-sky-500/40 space-y-2.5">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-sky-300">
+                      Synchronized Studio Audio Controls
+                    </span>
+                    <span className="text-[11px] text-slate-400">
+                      {mg.audioPlaying ? 'Playing on Studio' : 'Stopped'}
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => sendHostAction('minigame:audioPlay')}
+                      className="min-h-[44px] px-3 py-2 rounded-xl bg-sky-500 hover:bg-sky-400 text-slate-950 font-bold text-xs flex items-center justify-center gap-1.5 cursor-pointer whitespace-nowrap"
+                    >
+                      <Volume2 className="w-4 h-4" />
+                      <span>Play Audio Clip</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => sendHostAction('minigame:audioStop')}
+                      className="min-h-[44px] px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-white font-bold text-xs flex items-center justify-center gap-1.5 cursor-pointer whitespace-nowrap"
+                    >
+                      <Square className="w-4 h-4" />
+                      <span>Stop Audio</span>
+                    </button>
+                  </div>
+
+                  {mg.snapshot?.mediaUrl && (
+                    <audio
+                      controls
+                      src={mg.snapshot.mediaUrl}
+                      className="w-full h-10 mt-1"
+                    />
+                  )}
+                </div>
+              )}
+
+              {/* 30s Countdown Timer & Reveal Answer Controls */}
+              <div className="grid grid-cols-2 gap-2.5">
+                <button
+                  type="button"
+                  disabled={!mg}
+                  onClick={() => sendHostAction('minigame:startTimer')}
+                  className="min-h-[48px] px-3 py-2.5 rounded-xl bg-[#F59E0B] hover:bg-amber-400 disabled:opacity-40 text-slate-950 font-bold text-xs flex items-center justify-center gap-1.5 cursor-pointer whitespace-nowrap"
+                >
+                  <Play className="w-4 h-4 shrink-0" />
+                  <span>Start 30s Timer</span>
+                </button>
+
+                <button
+                  type="button"
+                  disabled={!mg}
+                  onClick={() => sendHostAction('minigame:resetTimer')}
+                  className="min-h-[48px] px-3 py-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 disabled:opacity-40 border border-slate-700 text-slate-200 font-bold text-xs flex items-center justify-center gap-1.5 cursor-pointer whitespace-nowrap"
+                >
+                  <RotateCcw className="w-4 h-4 shrink-0" />
+                  <span>Reset Timer</span>
+                </button>
+              </div>
+
+              <button
+                type="button"
+                disabled={!mg}
+                onClick={() => sendHostAction('minigame:revealAnswer')}
+                className="w-full min-h-[48px] px-4 py-3 rounded-xl bg-[#10B981] hover:bg-emerald-400 disabled:opacity-40 text-slate-950 font-extrabold text-xs flex items-center justify-center gap-2 cursor-pointer whitespace-nowrap"
+              >
+                <Eye className="w-4 h-4 shrink-0" />
+                <span>Reveal Answer on Studio</span>
+              </button>
+
+              {/* Round Judging Buttons: Correct (+1) vs Wrong (0) */}
+              <div className="grid grid-cols-2 gap-3 pt-1">
+                <button
+                  type="button"
+                  disabled={!mg || mg.scored}
+                  onClick={() =>
+                    sendHostAction('minigame:judge', {
+                      result: 'correct',
+                      team: state.activeTeam,
+                    })
+                  }
+                  className="min-h-[48px] px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 text-white font-bold text-xs flex items-center justify-center gap-1.5 cursor-pointer whitespace-nowrap"
+                >
+                  <CheckCircle2 className="w-4 h-4 shrink-0" />
+                  <span>
+                    Correct (+1 {state.activeTeam === 'red' ? 'Red' : 'Blue'})
+                  </span>
+                </button>
+
+                <button
+                  type="button"
+                  disabled={!mg || mg.scored}
+                  onClick={() =>
+                    sendHostAction('minigame:judge', {
+                      result: 'wrong',
+                      team: state.activeTeam,
+                    })
+                  }
+                  className="min-h-[48px] px-4 py-2.5 rounded-xl bg-red-600 hover:bg-red-500 disabled:opacity-40 text-white font-bold text-xs flex items-center justify-center gap-1.5 cursor-pointer whitespace-nowrap"
+                >
+                  <XCircle className="w-4 h-4 shrink-0" />
+                  <span>Wrong (0)</span>
+                </button>
+              </div>
+
+              <button
+                type="button"
+                disabled={!mg}
+                onClick={() => sendHostAction('minigame:backToBoard')}
+                className="w-full min-h-[48px] px-4 py-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 disabled:opacity-40 border border-slate-700 text-slate-200 font-bold text-xs flex items-center justify-center gap-2 cursor-pointer whitespace-nowrap"
+              >
+                <ArrowLeft className="w-4 h-4 shrink-0" />
+                <span>Back to Board</span>
+              </button>
+            </section>
+          )}
+        </div>
+      </main>
+    </div>
+  );
+};
+
+export const HostPage: React.FC = () => {
+  return (
+    <GameSyncProvider role="host">
+      <OwnerAuthGate
+        title="FanZone Host Control Console"
+        subtitle="iPad Live Broadcast Operator Authentication"
+      >
+        <HostConsoleBody />
+      </OwnerAuthGate>
+    </GameSyncProvider>
+  );
+};
