@@ -614,7 +614,7 @@ export const GameSyncProvider: React.FC<{
         if (data.state) {
           const incomingUpdatedAt = Number(data.state.updatedAt || data.updatedAt || 0);
           const currentUp = Number(stateRef.current?.updatedAt || 0);
-          if (role === 'studio' || !stateRef.current || incomingUpdatedAt > currentUp) {
+          if (!stateRef.current || incomingUpdatedAt > currentUp) {
             stateRef.current = data.state;
             setState(data.state);
             try {
@@ -1471,30 +1471,10 @@ export const GameSyncProvider: React.FC<{
 
   const resyncStudio = useCallback(() => {
     if (stateRef.current) {
-      const refreshed: GameSessionState = {
-        ...stateRef.current,
-        updatedAt: Math.max(Date.now(), (stateRef.current.updatedAt || 0) + 1),
-      };
-      stateRef.current = refreshed;
-      setState(refreshed);
-      broadcastLocalSync(refreshed, contentItemsRef.current);
-      realtimeSyncRef.current?.broadcastState(refreshed);
-      if (ownerAuth.token) {
-        fetch('/api/host/action', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${ownerAuth.token}`,
-          },
-          body: JSON.stringify({
-            action: 'session:sync',
-            clientState: refreshed,
-            contentItems: contentItemsRef.current,
-          }),
-        }).catch(() => {});
-      }
+      broadcastLocalSync(stateRef.current, contentItemsRef.current);
+      realtimeSyncRef.current?.broadcastState(stateRef.current);
     }
-  }, [broadcastLocalSync, ownerAuth.token]);
+  }, [broadcastLocalSync]);
 
   return (
     <GameSyncContext.Provider
